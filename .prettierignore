@@ -14,7 +14,7 @@ yarn-error.log
 .eslintignore
 logs/
 .devcontainer/
-.env
-.env.prod
+.envrc
+.envrc.prod
 .env.development
 data/
