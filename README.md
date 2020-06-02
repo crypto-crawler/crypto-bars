@@ -38,5 +38,14 @@ npm run build
 pm2 start pm2.misc.config.json
 pm2 start pm2.trade.config.js
 pm2 start pm2.bbo.config.js
+```
+
+And build bars:
+
+```bash
 pm2 start pm2.bar.config.js
 ```
+
+## How to contribute
+
+Open this project in VSCode and you're all set.
