@@ -1,7 +1,7 @@
 {
   "name": "crypto-bars",
   "version": "1.0.0",
-  "description": "Crawl data from cryptocurrency exchanges and make bars in realtime.",
+  "description": "Crawl data from cryptocurrency exchanges and build bars in realtime.",
   "bin": "dist/cli.js",
   "files": [
     "dist/"

@@ -1,6 +1,6 @@
 # crypto-bars
 
-Crawl data from cryptocurrency exchanges and make bars in realtime.
+Crawl data from cryptocurrency exchanges and build bars in realtime.
 
 Bars implemented:
 
