@@ -17,3 +17,4 @@ logs/
 .env
 .env.prod
 .env.development
+data/
