@@ -7,200 +7,68 @@ import path from 'path';
 import yargs from 'yargs';
 import { TIME_BAR_SIZES } from '../config/hyper_parameters';
 import { REDIS_TOPIC_PREFIX, REDIS_TOPIC_SPOT_INDEX_PRICE } from '../crawlers/common';
-import { createLogger, FileMsgWriter, Logger, Publisher, Subscriber } from '../utils';
-import { TimeBarMsg } from './bar_msg';
-import { aggregateBbo, aggregateTrade, calcVOIandOIR } from './common';
+import { FileMsgWriter, Publisher, Subscriber } from '../utils';
+import { calcVOIandOIR } from './common';
+import { BarMsg, TimeBarGenerator } from './index';
 
-const INTERVAL_NAME_SECOND_MAP: { [key: string]: number } = {
-  // '1s': 1,  // 1 second time bars have too many empty bars, the empty ratio can be above 70%, so it is removed
-  '10s': 10,
-  '1m': 60,
-  '3m': 180,
-  '5m': 300,
-  '15m': 900,
-  '30m': 1800,
-  '1H': 3600,
-  '4H': 14400,
-};
+class MultiTimeBarGenerator {
+  private barSizes: number[];
 
-class TimeBarBuilder {
-  private static N = 3; // keep N bars in memory
-
-  private logger: Logger;
-
-  private interval: string; // in second
-
-  private dataDir: string;
+  private outputDir: string;
 
   // key = exchange-marketType-pair-rawPair
-  private barsTrade = new Map<number, Map<string, TradeMsg[]>>(); // N bars
-
-  private barsBbo = new Map<number, Map<string, BboMsg[]>>(); // N bars
+  private barGenerators = new Map<string, TimeBarGenerator>();
 
   private fileWriters = new Map<string, FileMsgWriter>();
 
-  private publisher = new Publisher<TimeBarMsg>(process.env.REDIS_URL || 'redis://localhost:6379');
+  private publisher = new Publisher<BarMsg>(process.env.REDIS_URL || 'redis://localhost:6379');
 
-  constructor(interval: string, dataDir: string) {
-    this.interval = interval;
-
-    this.dataDir = dataDir;
-
-    this.logger = createLogger(`time_bar-${interval}`);
-
-    setInterval(this.scanOldBars.bind(this), INTERVAL_NAME_SECOND_MAP[this.interval] * 1000);
+  constructor(barSizes: number[], outputDir: string) {
+    this.barSizes = barSizes;
+    this.outputDir = outputDir;
   }
 
   public append(msg: Msg): void {
-    assert.ok(Number.isInteger(msg.timestamp));
-    if (msg.timestamp.toString().length !== 13) {
-      this.logger.error('msg.timestamp is not 13 length');
-      this.logger.error(JSON.stringify(msg));
-      process.exit(1);
-    }
+    this.barSizes.forEach((barSize) => {
+      const { exchange, marketType, pair, rawPair } = msg;
 
-    const intervalSeconds = INTERVAL_NAME_SECOND_MAP[this.interval];
-    const currentBar = Math.floor(Date.now() / (1000 * intervalSeconds)) * 1000 * intervalSeconds;
-    const oldestBar = currentBar - (TimeBarBuilder.N - 1) * 1000 * intervalSeconds;
-    const msgBar = Math.floor(msg.timestamp / (1000 * intervalSeconds)) * 1000 * intervalSeconds;
+      const key = `${msg.exchange}-${msg.marketType}-${msg.pair}-${msg.rawPair}-${barSize}`;
 
-    // msgBar should be in [oldestBar, currentBar] range
-    if (msgBar > currentBar) {
-      this.logger.error('This msg comes from future, impossible');
-      this.logger.error(msg);
-      return;
-    }
-    if (msgBar < oldestBar) {
-      this.logger.info(
-        `This msg arrives ${Date.now() - msg.timestamp} milliseconds late, ignore it`,
-      );
-      this.logger.info(msg);
-      return;
-    }
-
-    if (msg.channelType === 'Trade') {
-      this.appendTradeMsg(msg as TradeMsg);
-    } else if (msg.channelType === 'BBO') {
-      this.appendBboMsg(msg as BboMsg);
-    } else {
-      // do nothing
-    }
-  }
-
-  private appendTradeMsg(msg: TradeMsg): void {
-    const intervalSeconds = INTERVAL_NAME_SECOND_MAP[this.interval];
-    const msgBar = Math.floor(msg.timestamp / (1000 * intervalSeconds)) * 1000 * intervalSeconds;
-
-    if (!this.barsTrade.has(msgBar)) {
-      // create a new bar
-      this.barsTrade.set(msgBar, new Map<string, TradeMsg[]>());
-    }
-
-    const barsMap = this.barsTrade.get(msgBar)!;
-    assert.ok(barsMap);
-
-    const key = `${msg.exchange}-${msg.marketType}-${msg.pair}-${msg.rawPair}`;
-    if (!barsMap.has(key)) {
-      barsMap.set(key, []);
-    }
-
-    barsMap.get(key)!.push(msg);
-  }
-
-  private appendBboMsg(msg: BboMsg): void {
-    const intervalSeconds = INTERVAL_NAME_SECOND_MAP[this.interval];
-    const msgBar = Math.floor(msg.timestamp / (1000 * intervalSeconds)) * 1000 * intervalSeconds;
-
-    if (!this.barsBbo.has(msgBar)) {
-      // create a new bar
-      this.barsBbo.set(msgBar, new Map<string, BboMsg[]>());
-    }
-
-    const barsMap = this.barsBbo.get(msgBar)!;
-    assert.ok(barsMap);
-
-    const key = `${msg.exchange}-${msg.marketType}-${msg.pair}-${msg.rawPair}`;
-    if (!barsMap.has(key)) {
-      barsMap.set(key, []);
-    }
-
-    barsMap.get(key)!.push(msg);
-  }
-
-  private async scanOldBars(): Promise<void> {
-    const intervalSeconds = INTERVAL_NAME_SECOND_MAP[this.interval];
-    const currentBar = Math.floor(Date.now() / (1000 * intervalSeconds)) * 1000 * intervalSeconds;
-    const oldestBar = currentBar - (TimeBarBuilder.N - 1) * 1000 * intervalSeconds;
-
-    // scan old bars
-    Array.from(this.barsTrade.keys())
-      .concat(Array.from(this.barsBbo.keys()))
-      .filter((x) => x < oldestBar)
-      .sort((x, y) => x - y)
-      .forEach((t) => {
-        const tradeBar = this.barsTrade.get(t) || new Map<string, TradeMsg[]>();
-        const bboBar = this.barsBbo.get(t) || new Map<string, BboMsg[]>();
-        // Remove this bar
-        this.barsTrade.delete(t);
-        this.barsBbo.delete(t);
-
-        const keys = new Set(Array.from(tradeBar.keys()).concat(Array.from(bboBar.keys())));
-        keys.forEach((key) => {
-          const { exchange, marketType, pair, rawPair } = (tradeBar.get(key) ||
-            bboBar.get(key)!)[0];
-
-          if (!this.fileWriters.has(key)) {
-            this.fileWriters.set(
-              key,
-              new FileMsgWriter(
-                marketType === 'Spot' || marketType === 'Swap'
-                  ? path.join(this.dataDir, this.interval, `${exchange}-${marketType}`, pair)
-                  : path.join(
-                      this.dataDir,
-                      this.interval,
-                      `${exchange}-${marketType}`,
-                      pair,
-                      rawPair,
-                    ),
-              ),
-            );
-          }
-
-          const snapshot: TimeBarMsg = {
-            exchange,
-            market_type: marketType,
-            pair,
-            raw_rair: rawPair,
-            bar_type: 'TimeBar',
-            interval: INTERVAL_NAME_SECOND_MAP[this.interval],
-            timestamp: t,
-            timestamp_end: t + INTERVAL_NAME_SECOND_MAP[this.interval] * 1000,
-          };
-
-          if (tradeBar.has(key)) {
-            const { trade, trade_indicators } = aggregateTrade(
-              tradeBar
-                .get(key)!
-                .sort((x, y) =>
-                  x.timestamp !== y.timestamp
-                    ? x.timestamp - y.timestamp
-                    : x.trade_id.localeCompare(y.trade_id),
+      if (!this.fileWriters.has(key)) {
+        this.fileWriters.set(
+          key,
+          new FileMsgWriter(
+            marketType === 'Spot' || marketType === 'Swap'
+              ? path.join(this.outputDir, barSize.toString(), `${exchange}-${marketType}`, pair)
+              : path.join(
+                  this.outputDir,
+                  barSize.toString(),
+                  `${exchange}-${marketType}`,
+                  pair,
+                  rawPair,
                 ),
-            );
-            snapshot.trade = trade;
-            snapshot.trade_indicators = trade_indicators;
-          }
-          if (bboBar.has(key)) {
-            snapshot.bbo = aggregateBbo(bboBar.get(key)!.sort((x, y) => x.timestamp - y.timestamp));
-          }
+          ),
+        );
+      }
+      const fileWriter = this.fileWriters.get(key)!;
+
+      if (!this.barGenerators.has(key)) {
+        const barGenerator = new TimeBarGenerator(barSize);
+
+        barGenerator.on('bar', (barMsg) => {
+          fileWriter.write([barMsg]);
 
           this.publisher.publish(
-            `${REDIS_TOPIC_PREFIX}:TimeBar:${pair}:${marketType}${this.interval}`,
-            snapshot,
+            `${REDIS_TOPIC_PREFIX}:TimeBar:${pair}:${marketType}:${barSize}`,
+            barMsg,
           );
-          this.fileWriters.get(key)!.write([snapshot]);
         });
-      });
+
+        this.barGenerators.set(key, barGenerator);
+      } else {
+        this.barGenerators.get(key)!.append(msg);
+      }
+    });
   }
 }
 
@@ -246,8 +114,9 @@ const commandModule: yargs.CommandModule = {
     //   assert.ok(priceIndexMap.get(pair)! > 0);
     // });
 
-    const timeBarBuilders = TIME_BAR_SIZES.map(
-      (barSize) => new TimeBarBuilder(barSize, path.join(process.env.DATA_DIR!, 'TimeBar')),
+    const multiTimeBarGenerator = new MultiTimeBarGenerator(
+      TIME_BAR_SIZES,
+      path.join(process.env.DATA_DIR!, 'TimeBar'),
     );
 
     const tradeSubscriber = new Subscriber(
@@ -260,7 +129,7 @@ const commandModule: yargs.CommandModule = {
         // eslint-disable-next-line no-param-reassign
         ((tradeMsg as unknown) as { basis: number }).basis = basis;
 
-        timeBarBuilders.forEach((x) => x.append(tradeMsg));
+        multiTimeBarGenerator.append(tradeMsg);
       },
       `${REDIS_TOPIC_PREFIX}:trade-${params.exchange}-${params.marketType}`,
       REDIS_URL,
@@ -302,7 +171,7 @@ const commandModule: yargs.CommandModule = {
         tmp.voi_norm = voi / spread;
         tmp.oir_norm = oir / spread;
 
-        timeBarBuilders.forEach((x) => x.append(bboMsg));
+        multiTimeBarGenerator.append(bboMsg);
       },
       `${REDIS_TOPIC_PREFIX}:bbo-${params.exchange}-${params.marketType}`,
       REDIS_URL,

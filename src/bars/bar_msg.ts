@@ -10,9 +10,17 @@ export interface BarMsg {
   pair: string;
   raw_rair: string;
   bar_type: BarType;
-  interval: number; // in second, BTC, ETH, USD, etc.
+  bar_size: number; // in second, BTC, ETH, USD, etc.
   timestamp: number; // begin time
   timestamp_end: number; // end time
+
+  trade: TradeAggregateMsg;
+
+  // Indicators based on Trade
+  trade_indicators: TradeIndicators;
+
+  // best bid & offer
+  bbo?: BboIndicators;
 }
 
 export interface AggregateMsg {
@@ -76,15 +84,3 @@ export interface BboIndicators {
   voi_norm: AggregateMsg;
   oir_norm: AggregateMsg;
 }
-
-export interface TimeBarMsg extends BarMsg {
-  trade?: TradeAggregateMsg;
-
-  // Indicators based on Trade
-  trade_indicators?: TradeIndicators;
-
-  // best bid & offer
-  bbo?: BboIndicators;
-}
-
-export type VolumeBarMsg = TimeBarMsg;

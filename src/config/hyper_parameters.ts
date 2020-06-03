@@ -1,4 +1,5 @@
-export const TIME_BAR_SIZES = ['10s', '1m', '3m', '5m', '15m', '30m', '1H', '4H'];
+// ['10s', '1m', '3m', '5m', '15m', '30m', '1H', '4H']
+export const TIME_BAR_SIZES = [10, 60, 180, 300, 900, 1800, 3600, 14400];
 
 export const TICK_BAR_SIZES = {
   BTC: [4, 8, 16, 32, 64, 128],

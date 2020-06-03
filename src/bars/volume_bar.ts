@@ -1,18 +1,88 @@
 import { strict as assert } from 'assert';
 import { BboMsg } from 'coin-bbo';
-import { TradeMsg } from 'crypto-crawler';
+import { Msg, SUPPORTED_EXCHANGES, TradeMsg } from 'crypto-crawler';
 import { IndexTickerMsg } from 'crypto-crawler/dist/crawler/okex';
 import { MarketType, MARKET_TYPES } from 'crypto-markets';
 import path from 'path';
 import yargs from 'yargs';
 import { DOLLAR_BAR_SIZES, TICK_BAR_SIZES, VOLUME_BAR_SIZES } from '../config/hyper_parameters';
 import { REDIS_TOPIC_PREFIX, REDIS_TOPIC_SPOT_INDEX_PRICE } from '../crawlers/common';
-import { Subscriber, TimePriorityQueue } from '../utils';
-import { VolumeBarBuilder } from './bar_builder';
-import { BarType } from './bar_msg';
+import { FileMsgWriter, Publisher, Subscriber, TimePriorityQueue } from '../utils';
 import { calcVOIandOIR } from './common';
+import { BarMsg, BarType, VolumeBarGenerator } from './index';
 
-function createModule(barType: BarType): yargs.CommandModule {
+class MultiVolumeBarGenerator {
+  private barType: BarType;
+
+  private barSizes: { [key: string]: number[] }; // base -> barSizes
+
+  private outputDir: string;
+
+  // key = exchange-marketType-pair-rawPair
+  private barGenerators = new Map<string, VolumeBarGenerator>();
+
+  private fileWriters = new Map<string, FileMsgWriter>();
+
+  private publisher = new Publisher<BarMsg>(process.env.REDIS_URL || 'redis://localhost:6379');
+
+  constructor(
+    barType: BarType,
+    barSizes: { [key: string]: number[] }, // base -> barSizes
+    outputDir: string,
+  ) {
+    this.barType = barType;
+
+    this.barSizes = barSizes;
+
+    this.outputDir = outputDir;
+  }
+
+  public append(msg: Msg): void {
+    const base = msg.pair.split('_')[0]; // base currency
+    this.barSizes[base].forEach((barSize) => {
+      const { exchange, marketType, pair, rawPair } = msg;
+
+      const key = `${msg.exchange}-${msg.marketType}-${msg.pair}-${msg.rawPair}-${barSize}`;
+
+      if (!this.fileWriters.has(key)) {
+        this.fileWriters.set(
+          key,
+          new FileMsgWriter(
+            marketType === 'Spot' || marketType === 'Swap'
+              ? path.join(this.outputDir, barSize.toString(), `${exchange}-${marketType}`, pair)
+              : path.join(
+                  this.outputDir,
+                  barSize.toString(),
+                  `${exchange}-${marketType}`,
+                  pair,
+                  rawPair,
+                ),
+          ),
+        );
+      }
+      const fileWriter = this.fileWriters.get(key)!;
+
+      if (!this.barGenerators.has(key)) {
+        const barGenerator = new VolumeBarGenerator(this.barType, barSize);
+
+        barGenerator.on('bar', (barMsg) => {
+          fileWriter.write([barMsg]);
+
+          this.publisher.publish(
+            `${REDIS_TOPIC_PREFIX}:${this.barType}:${pair}:${marketType}:${barSize}`,
+            barMsg,
+          );
+        });
+
+        this.barGenerators.set(key, barGenerator);
+      } else {
+        this.barGenerators.get(key)!.append(msg);
+      }
+    });
+  }
+}
+
+function createModule(barType: 'TickBar' | 'VolumeBar' | 'DollarBar'): yargs.CommandModule {
   let commandName = 'unknown';
   let barSizes: { [key: string]: number[] } = {};
 
@@ -40,6 +110,7 @@ function createModule(barType: BarType): yargs.CommandModule {
     builder: (yargs) =>
       yargs
         .positional('exchange', {
+          choices: SUPPORTED_EXCHANGES,
           type: 'string',
           demandOption: true,
         })
@@ -75,7 +146,7 @@ function createModule(barType: BarType): yargs.CommandModule {
       //   assert.ok(priceIndexMap.get(pair)! > 0);
       // });
 
-      const barBuilder = new VolumeBarBuilder(
+      const multiBarGenerator = new MultiVolumeBarGenerator(
         barType,
         barSizes,
         path.join(process.env.DATA_DIR!, barType),
@@ -100,7 +171,7 @@ function createModule(barType: BarType): yargs.CommandModule {
             // eslint-disable-next-line no-param-reassign
             ((tradeMsg as unknown) as { basis: number }).basis = basis;
 
-            barBuilder.append(tradeMsg);
+            multiBarGenerator.append(tradeMsg);
           });
         },
         `${REDIS_TOPIC_PREFIX}:trade-${params.exchange}-${params.marketType}`,
@@ -148,7 +219,7 @@ function createModule(barType: BarType): yargs.CommandModule {
             tmp.voi_norm = voi / spread;
             tmp.oir_norm = oir / spread;
 
-            barBuilder.append(bboMsg);
+            multiBarGenerator.append(bboMsg);
           });
         },
         `${REDIS_TOPIC_PREFIX}:bbo-${params.exchange}-${params.marketType}`,
