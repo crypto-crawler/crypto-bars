@@ -76,7 +76,6 @@ class AllInOneBarGenerator {
         })),
       );
     });
-    console.info(this.barTypes);
   }
 
   public append(msg: Msg): void {
@@ -160,7 +159,6 @@ const commandModule: yargs.CommandModule = {
       exchange: string;
       marketType: MarketType;
     } = argv as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-    console.info(params);
     assert.ok(process.env.DATA_DIR, 'Please define a DATA_DIR environment variable in .envrc');
 
     const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379';
