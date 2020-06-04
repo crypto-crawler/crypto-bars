@@ -37,7 +37,6 @@ npm run build
 ```bash
 pm2 start pm2.misc.config.json
 pm2 start pm2.trade.config.js
-pm2 start pm2.bbo.config.js
 ```
 
 And build bars:

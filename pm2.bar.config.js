@@ -4,41 +4,21 @@ const exchangePairs = require('./exchange_pairs');
 
 assert.ok(process.env.DATA_DIR, 'Please define the DATA_DIR environment variable in .envrc');
 
+assert.ok(process.env.PAIRS, 'Please define the PAIRS environment variable in .envrc');
+const PAIRS = process.env.PAIRS.split(' ');
+assert.ok(PAIRS.length > 0);
+
 const apps = [];
 
 Object.keys(exchangePairs).forEach((exchange) => {
   Object.keys(exchangePairs[exchange]).forEach((marketType) => {
-    apps.push({
-      name: `time_bar-${exchange}-${marketType}`,
-      script: 'dist/cli.js',
-      args: `time_bar ${exchange} ${marketType}`,
-      instances: 1,
-      autorestart: true,
-      watch: false,
-    });
+    const pairs = exchangePairs[exchange][marketType].filter((x) => PAIRS.includes(x));
+    if (pairs.length <= 0) return;
 
     apps.push({
-      name: `tick_bar-${exchange}-${marketType}`,
+      name: `bar-${exchange}-${marketType}`,
       script: 'dist/cli.js',
-      args: `tick_bar ${exchange} ${marketType}`,
-      instances: 1,
-      autorestart: true,
-      watch: false,
-    });
-
-    apps.push({
-      name: `volume_bar-${exchange}-${marketType}`,
-      script: 'dist/cli.js',
-      args: `volume_bar ${exchange} ${marketType}`,
-      instances: 1,
-      autorestart: true,
-      watch: false,
-    });
-
-    apps.push({
-      name: `dollar_bar-${exchange}-${marketType}`,
-      script: 'dist/cli.js',
-      args: `dollar_bar ${exchange} ${marketType}`,
+      args: `bar ${exchange} ${marketType}`,
       instances: 1,
       autorestart: true,
       watch: false,

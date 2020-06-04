@@ -26,6 +26,8 @@ Object.keys(exchangePairs).forEach((exchange) => {
   });
 });
 
+apps.splice(0, apps.length); // disable BBO crawlers
+
 module.exports = {
   apps,
 };

@@ -1,4 +1,5 @@
 // eslint-disable-next-line max-classes-per-file
+import { strict as assert } from 'assert';
 import { BboMsg } from 'coin-bbo';
 import { TradeMsg } from 'crypto-crawler';
 import { BarGenerator } from './bar_generator';
@@ -10,6 +11,11 @@ export class VolumeBarGenerator extends BarGenerator {
   private tradeMsges: TradeMsg[] = [];
 
   private bboMsges: BboMsg[] = [];
+
+  constructor(barType: 'TickBar' | 'VolumeBar' | 'DollarBar', barSize: number) {
+    super(barType, barSize);
+    assert.notEqual(barType, 'TimeBar');
+  }
 
   protected appendTradeMsg(msg: TradeMsg): void {
     this.tradeMsges.push(msg);
