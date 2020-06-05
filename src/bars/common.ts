@@ -30,6 +30,24 @@ export function aggregate(nums: readonly number[]): AggregateMsg {
   };
 }
 
+// forked from mlfinlab/util/fast_ewma.py
+export function ewma(arr_in: Float32Array, window: number): Float32Array {
+  assert.ok(Number.isInteger(window));
+  const arr_length = arr_in.length;
+  const ewma_arr = new Float32Array(arr_in.length);
+  const alpha = 2 / (window + 1);
+  let weight = 1;
+  let ewma_old = arr_in[0];
+  ewma_arr[0] = ewma_old;
+  for (let i = 1; i < arr_length; i += 1) {
+    weight += (1 - alpha) ** i;
+    ewma_old = ewma_old * (1 - alpha) + arr_in[i];
+    ewma_arr[i] = ewma_old / weight;
+  }
+
+  return ewma_arr;
+}
+
 export function aggregateTrade(
   trades: readonly TradeMsg[],
 ): { trade: TradeAggregateMsg; trade_indicators: TradeIndicators } {
